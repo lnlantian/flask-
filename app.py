@@ -222,13 +222,134 @@ def run_simple(hostname, port, application, use_reloader=False,
              ssl_context is None and 'http' or 'https',
              display_hostname, port, quit_msg)
         
-##
+## SharedDataMiddleware
 
+    def __call__(self, environ, start_response):
+        cleaned_path = get_path_info(environ)
+        if PY2:
+            cleaned_path = cleaned_path.encode(get_filesystem_encoding())
+        # sanitize the path for non unix systems
+        cleaned_path = cleaned_path.strip('/')
+        for sep in os.sep, os.altsep:
+            if sep and sep != '/':
+                cleaned_path = cleaned_path.replace(sep, '/')
+        path = '/' + '/'.join(x for x in cleaned_path.split('/')
+                              if x and x != '..')
+        file_loader = None
+        for search_path, loader in self.exports:
+            if search_path == path:
+                real_filename, file_loader = loader(None)
+                if file_loader is not None:
+                    break
+            if not search_path.endswith('/'):
+                search_path += '/'
+            if path.startswith(search_path):
+                real_filename, file_loader = loader(path[len(search_path):])
+                if file_loader is not None:
+                    break
+        if file_loader is None or not self.is_allowed(real_filename):
+            return self.app(environ, start_response)
 
+        guessed_type = mimetypes.guess_type(real_filename)
+        mime_type = guessed_type[0] or self.fallback_mimetype
+        f, mtime, file_size = file_loader()
 
+        headers = [('Date', http_date())]
+        if self.cache:
+            timeout = self.cache_timeout
+            etag = self.generate_etag(mtime, file_size, real_filename)
+            headers += [
+                ('Etag', '"%s"' % etag),
+                ('Cache-Control', 'max-age=%d, public' % timeout)
+            ]
+            if not is_resource_modified(environ, etag, last_modified=mtime):
+                f.close()
+                start_response('304 Not Modified', headers)
+                return []
+            headers.append(('Expires', http_date(time() + timeout)))
+        else:
+            headers.append(('Cache-Control', 'public'))
 
+        headers.extend((
+            ('Content-Type', mime_type),
+            ('Content-Length', str(file_size)),
+            ('Last-Modified', http_date(mtime))
+        ))
+        start_response('200 OK', headers)
+        return wrap_file(environ, f)
 
+## self.app
 
+ if file_loader is None or not self.is_allowed(real_filename):
+            return self.app(environ, start_response)
+
+########################
+
+##当请求进来
+
+     def execute(app):
+            application_iter = app(environ, start_response)
+            try:
+                for data in application_iter:
+                    write(data)
+                if not headers_sent:
+                    write(b'')
+            finally:
+                if hasattr(application_iter, 'close'):
+                    application_iter.close()
+                application_iter = None
+                
+ ## __call__
+
+ def __call__(self, environ, start_response):
+        """The WSGI server calls the Flask application object as the
+        WSGI application. This calls :meth:`wsgi_app` which can be
+        wrapped to applying middleware."""
+        return self.wsgi_app(environ, start_response)
+## wsgi_app
+
+ def wsgi_app(self, environ, start_response):
+        """The actual WSGI application. This is not implemented in
+        :meth:`__call__` so that middlewares can be applied without
+        losing a reference to the app object. Instead of doing this::
+
+            app = MyMiddleware(app)
+
+        It's a better idea to do this instead::
+
+            app.wsgi_app = MyMiddleware(app.wsgi_app)
+
+        Then you still have the original application object around and
+        can continue to call methods on it.
+
+        .. versionchanged:: 0.7
+            Teardown events for the request and app contexts are called
+            even if an unhandled error occurs. Other events may not be
+            called depending on when an error occurs during dispatch.
+            See :ref:`callbacks-and-errors`.
+
+        :param environ: A WSGI environment.
+        :param start_response: A callable accepting a status code,
+            a list of headers, and an optional exception context to
+            start the response.
+        """
+        ctx = self.request_context(environ)
+        error = None
+        try:
+            try:
+                ctx.push()
+                response = self.full_dispatch_request()
+            except Exception as e:
+                error = e
+                response = self.handle_exception(e)
+            except:  # noqa: B001
+                error = sys.exc_info()[1]
+                raise
+            return response(environ, start_response)
+        finally:
+            if self.should_ignore_error(error):
+                error = None
+            ctx.auto_pop(error)
 
 
 
