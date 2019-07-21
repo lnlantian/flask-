@@ -351,8 +351,7 @@ def run_simple(hostname, port, application, use_reloader=False,
                 error = None
             ctx.auto_pop(error)
 
-
-
-
-
-
+##实例化的Flask应用是一个可调用对象。在前面讲到，Web应用要遵循WSGI规范，就要实现一个函数或者一个可调用对象webapp(environ, start_response)
+，以方便服务器或网关调用。Flask应用通过__call__(environ, start_response)方法可以让它被服务器或网关调用
+https://segmentfault.com/a/1190000009152550
+##
